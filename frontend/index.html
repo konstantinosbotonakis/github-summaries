@@ -23,8 +23,22 @@
             </div>
         </header>
 
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs">
+            <button class="nav-tab active" onclick="switchTab('dashboard')" id="dashboardTab">
+                <i class="fas fa-tachometer-alt"></i>
+                Dashboard
+            </button>
+            <button class="nav-tab" onclick="switchTab('repositories')" id="repositoriesTab">
+                <i class="fab fa-github"></i>
+                Repositories
+            </button>
+        </nav>
+
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Dashboard Content -->
+            <div id="dashboardContent" class="tab-content active">
             <!-- Dashboard Cards -->
             <section class="dashboard">
                 <div class="card">
@@ -149,6 +163,99 @@
                     </div>
                 </div>
             </section>
+            </div>
+
+            <!-- Repositories Content -->
+            <div id="repositoriesContent" class="tab-content">
+                <!-- Repository Management Section -->
+                <section class="repository-management">
+                    <div class="card full-width">
+                        <div class="card-header">
+                            <i class="fab fa-github"></i>
+                            <h3>Repository Management</h3>
+                        </div>
+                        <div class="card-content">
+                            <!-- Add Repository Form -->
+                            <div class="add-repo-form">
+                                <input type="text" id="repoUrl" placeholder="Enter GitHub repository URL (e.g., https://github.com/owner/repo)">
+                                <button class="btn btn-primary" onclick="addRepository()">
+                                    <i class="fas fa-plus"></i>
+                                    Add Repository
+                                </button>
+                            </div>
+                            
+                            <!-- Repository List -->
+                            <div class="repo-list" id="repositoryList">
+                                <div class="loading">Loading repositories...</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Repository Statistics -->
+                <section class="repository-stats">
+                    <div class="dashboard">
+                        <div class="card">
+                            <div class="card-header">
+                                <i class="fas fa-eye"></i>
+                                <h3>Monitored Repositories</h3>
+                            </div>
+                            <div class="card-content">
+                                <div class="stat-value" id="monitoredCount">0</div>
+                                <div class="stat-label">Active Repositories</div>
+                            </div>
+                        </div>
+                        
+                        <div class="card">
+                            <div class="card-header">
+                                <i class="fas fa-code-branch"></i>
+                                <h3>Recent Commits</h3>
+                            </div>
+                            <div class="card-content">
+                                <div class="stat-value" id="recentCommits">0</div>
+                                <div class="stat-label">Last 24 Hours</div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <i class="fas fa-file-alt"></i>
+                                <h3>AI Summaries</h3>
+                            </div>
+                            <div class="card-content">
+                                <div class="stat-value" id="summariesCount">0</div>
+                                <div class="stat-label">Generated</div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <i class="fas fa-star"></i>
+                                <h3>Total Stars</h3>
+                            </div>
+                            <div class="card-content">
+                                <div class="stat-value" id="totalStars">0</div>
+                                <div class="stat-label">Across All Repos</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Recent Summaries -->
+                <section class="recent-summaries">
+                    <div class="card full-width">
+                        <div class="card-header">
+                            <i class="fas fa-robot"></i>
+                            <h3>Recent AI Summaries</h3>
+                        </div>
+                        <div class="card-content">
+                            <div id="summariesList">
+                                <div class="loading">Loading summaries...</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
         </main>
 
         <!-- Footer -->
