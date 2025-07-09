@@ -75,6 +75,19 @@ async function loadHealthStatus() {
     }
 }
 
+// Load system information
+async function loadSystemInfo() {
+    try {
+        const response = await fetch('/info');
+        const data = await response.json();
+        
+        updateSystemInfo(data);
+    } catch (error) {
+        console.error('Failed to load system info:', error);
+        showError('Failed to load system information');
+    }
+}
+
 // Update overall status indicator
 function updateOverallStatus(healthData) {
     const status = healthData.status || 'unhealthy';
