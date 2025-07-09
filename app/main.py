@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import engine, create_tables, connect_database, disconnect_database
 from app.api.health import router as health_router
 from app.api.repositories import router as repositories_router
+from app.services.llm_service import llm_service
 
 
 # Configure logging
@@ -33,6 +34,14 @@ async def lifespan(app: FastAPI):
     logger.info("Connected to database")
     await create_tables()
     logger.info("Database tables created/verified")
+    
+    # Initialize LLM service
+    logger.info("Initializing LLM service...")
+    llm_initialized = await llm_service.initialize()
+    if llm_initialized:
+        logger.info("LLM service initialized successfully")
+    else:
+        logger.warning("LLM service initialization failed - AI summaries will not be available")
     
     yield
     

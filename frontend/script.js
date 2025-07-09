@@ -709,7 +709,21 @@ async function loadSummaries(repositoryId = null) {
                 throw new Error(`HTTP error! status: ${reposResponse.status}`);
             }
             
-            const repositories = await reposResponse.json();
+            const responseData = await reposResponse.json();
+            console.log('DEBUG loadSummaries: Raw API response:', responseData);
+            console.log('DEBUG loadSummaries: Response type:', typeof responseData);
+            console.log('DEBUG loadSummaries: Is array?', Array.isArray(responseData));
+            
+            // Extract repositories array from response object
+            const repositories = responseData.repositories || responseData;
+            console.log('DEBUG loadSummaries: Extracted repositories:', repositories);
+            console.log('DEBUG loadSummaries: Repositories type:', typeof repositories);
+            console.log('DEBUG loadSummaries: Repositories is array?', Array.isArray(repositories));
+            
+            if (!Array.isArray(repositories)) {
+                console.error('DEBUG loadSummaries: repositories is not an array!', repositories);
+                throw new Error('Invalid response format: repositories is not an array');
+            }
             
             // Load summaries for each repository
             const summaryPromises = repositories.map(async (repo) => {
