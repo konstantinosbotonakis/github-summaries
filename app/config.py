@@ -21,7 +21,7 @@ def load_database_config() -> Dict[str, Any]:
         except (json.JSONDecodeError, IOError):
             # If config file is invalid, return empty dict to fall back to defaults
             pass
-    return {}
+    return {"type": "sqlite", "path": "./test.db"}
 
 
 class Settings(BaseSettings):
@@ -46,53 +46,26 @@ class Settings(BaseSettings):
         env="CORS_ORIGINS"
     )
     
-    # Database Configuration - using config file values as defaults
-    @property
-    def POSTGRES_DB(self) -> str:
-        return os.getenv("POSTGRES_DB") or self._db_config.get("name", "github_monitor")
-    
-    @property
-    def POSTGRES_USER(self) -> str:
-        return os.getenv("POSTGRES_USER") or self._db_config.get("user", "postgres")
-    
-    @property
-    def POSTGRES_PASSWORD(self) -> str:
-        return os.getenv("POSTGRES_PASSWORD") or self._db_config.get("password", "github_monitor_2024")
-    
-    @property
-    def DATABASE_HOST(self) -> str:
-        return os.getenv("DATABASE_HOST") or self._db_config.get("host", "db")
-    
-    @property
-    def DATABASE_PORT(self) -> int:
-        return int(os.getenv("DATABASE_PORT", self._db_config.get("port", 5432)))
-    
+    # Database Configuration - defaults to SQLite
     @property
     def DATABASE_URL(self) -> str:
         env_url = os.getenv("DATABASE_URL")
         if env_url:
             return env_url
         
-        # Construct URL from individual components
-        host = self.DATABASE_HOST
-        port = self.DATABASE_PORT
-        db = self.POSTGRES_DB
-        user = self.POSTGRES_USER
-        password = self.POSTGRES_PASSWORD
-        
-        return f"postgresql://{user}:{password}@{host}:{port}/{db}"
-    
-    # Redis Configuration
-    REDIS_URL: str = Field(default="redis://redis:6379", env="REDIS_URL")
-    REDIS_TTL: int = Field(default=3600, env="REDIS_TTL")
+        # Default to SQLite if no DATABASE_URL is provided
+        db_path = self._db_config.get("path", "./test.db")
+        return f"sqlite:///{db_path}"
     
     # GitHub API Configuration
     GITHUB_TOKEN: str = Field(default="", env="GITHUB_TOKEN")
     GITHUB_API_URL: str = Field(default="https://api.github.com", env="GITHUB_API_URL")
     
-    # Ollama Configuration
-    OLLAMA_URL: str = Field(default="http://ollama:11434", env="OLLAMA_URL")
-    OLLAMA_MODEL: str = Field(default="llama2", env="OLLAMA_MODEL")
+    # Hugging Face Model Configuration
+    HF_MODEL_NAME: str = Field(default="google/flan-t5-small", env="HF_MODEL_NAME")
+    HF_DEVICE: str = Field(default="cpu", env="HF_DEVICE")  # "cpu" or "cuda"
+    HF_MAX_LENGTH: int = Field(default=512, env="HF_MAX_LENGTH")
+    HF_CACHE_DIR: str = Field(default="./models", env="HF_CACHE_DIR")
     
     # Logging Configuration
     LOG_LEVEL: str = Field(default="INFO", env="LOG_LEVEL")
@@ -127,14 +100,19 @@ def get_database_url() -> str:
     return settings.DATABASE_URL
 
 
-def get_redis_url() -> str:
-    """Get the Redis URL."""
-    return settings.REDIS_URL
+def get_hf_model_name() -> str:
+    """Get the Hugging Face model name."""
+    return settings.HF_MODEL_NAME
 
 
-def get_ollama_url() -> str:
-    """Get the Ollama URL."""
-    return settings.OLLAMA_URL
+def get_hf_device() -> str:
+    """Get the Hugging Face device."""
+    return settings.HF_DEVICE
+
+
+def get_hf_cache_dir() -> str:
+    """Get the Hugging Face cache directory."""
+    return settings.HF_CACHE_DIR
 
 
 def is_development() -> bool:

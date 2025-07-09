@@ -3,9 +3,10 @@ Repository management API endpoints.
 """
 
 import logging
+import asyncio
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from pydantic import BaseModel, HttpUrl, validator
@@ -58,6 +59,34 @@ class SummaryListResponse(BaseModel):
     summaries: List[SummaryResponse]
     total: int
     repository_id: int
+
+
+class WeeklySummaryRequest(BaseModel):
+    """Schema for weekly summary generation request."""
+    summary_type: str = "weekly"
+    
+    @validator('summary_type')
+    def validate_summary_type(cls, v):
+        """Validate summary type for weekly summaries."""
+        valid_types = ["weekly", "commits"]
+        if v not in valid_types:
+            raise ValueError(f'Summary type must be one of: {", ".join(valid_types)}')
+        return v
+
+
+class SummaryStatusResponse(BaseModel):
+    """Schema for summary generation status response."""
+    repository_id: int
+    status: str  # "idle", "generating", "completed", "failed"
+    summary_type: Optional[str] = None
+    progress_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+# Global dictionary to track summarization status
+_summarization_status = {}
 
 
 @router.get("/repositories", response_model=RepositoryListResponse)
@@ -577,6 +606,288 @@ async def generate_ai_summary(
         )
 
 
+async def _generate_weekly_summary_background(
+    repository_id: int,
+    summary_type: str,
+    db: Session
+):
+    """
+    Background task to generate weekly summary for a repository.
+    
+    Args:
+        repository_id: Repository ID
+        summary_type: Type of summary to generate
+        db: Database session
+    """
+    try:
+        # Update status to generating
+        _summarization_status[repository_id] = {
+            "status": "generating",
+            "summary_type": summary_type,
+            "progress_message": "Fetching repository information...",
+            "started_at": datetime.utcnow(),
+            "completed_at": None,
+            "error_message": None
+        }
+        
+        # Get repository
+        repository = db.query(Repository).filter(Repository.id == repository_id).first()
+        if not repository:
+            raise Exception(f"Repository with ID {repository_id} not found")
+        
+        # Extract owner and repo name
+        owner, repo_name = repository.full_name.split('/')
+        
+        # Update status
+        _summarization_status[repository_id]["progress_message"] = "Fetching commits from last week..."
+        
+        # Fetch commits from last week
+        commits_data = await github_service.get_commits_last_week(owner, repo_name)
+        
+        if not commits_data:
+            _summarization_status[repository_id].update({
+                "status": "completed",
+                "progress_message": "No commits found in the last week",
+                "completed_at": datetime.utcnow()
+            })
+            return
+        
+        # Update status
+        _summarization_status[repository_id]["progress_message"] = f"Generating AI summary for {len(commits_data)} commits..."
+        
+        # Prepare repository data
+        repository_data = {
+            "name": repository.name,
+            "full_name": repository.full_name,
+            "description": repository.description,
+            "language": repository.language,
+            "stars_count": repository.stars_count,
+            "forks_count": repository.forks_count,
+            "watchers_count": repository.watchers_count,
+            "topics": repository.topics,
+            "license_name": repository.license_name,
+            "owner_login": repository.owner_login,
+            "is_fork": repository.is_fork,
+            "is_archived": repository.is_archived,
+            "created_at": repository.created_at.isoformat() if repository.created_at else None,
+            "updated_at": repository.updated_at.isoformat() if repository.updated_at else None
+        }
+        
+        # Convert commits data to dict format for LLM
+        commits_dict_data = []
+        for commit in commits_data:
+            commits_dict_data.append({
+                "sha": commit.sha,
+                "message": commit.message,
+                "author_name": commit.author_name,
+                "author_email": commit.author_email,
+                "author_date": commit.author_date.isoformat() if commit.author_date else None,
+                "additions": commit.additions,
+                "deletions": commit.deletions,
+                "total_changes": commit.total_changes
+            })
+        
+        # Generate AI summary
+        llm_response = await llm_service.generate_commits_summary(
+            repository_data,
+            commits_dict_data,
+            summary_type
+        )
+        
+        # Update status
+        _summarization_status[repository_id]["progress_message"] = "Saving summary to database..."
+        
+        # Extract key points from the generated content
+        content_lines = llm_response.content.split('\n')
+        key_points = [line.strip() for line in content_lines if line.strip() and len(line.strip()) > 20][:5]
+        
+        # Generate title based on summary type
+        title_map = {
+            "weekly": f"Weekly Activity Summary: {repository.name}",
+            "commits": f"Commits Analysis: {repository.name}"
+        }
+        title = title_map.get(summary_type, f"Weekly Summary: {repository.name}")
+        
+        # Create new summary
+        new_summary = Summary(
+            repository_id=repository_id,
+            commit_id=None,  # Weekly summaries are not tied to specific commits
+            summary_type=summary_type,
+            title=title,
+            content=llm_response.content,
+            key_points=key_points,
+            tags=[summary_type, "ai-generated", "last-week", repository.language] if repository.language else [summary_type, "ai-generated", "last-week"],
+            sentiment="neutral",
+            confidence_score=llm_response.confidence_score,
+            model_used=llm_response.model_used,
+            model_version=None,
+            processing_time=llm_response.processing_time,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+            is_published=True
+        )
+        
+        # Save to database
+        db.add(new_summary)
+        db.commit()
+        db.refresh(new_summary)
+        
+        # Update status to completed
+        _summarization_status[repository_id].update({
+            "status": "completed",
+            "progress_message": f"Successfully generated {summary_type} summary",
+            "completed_at": datetime.utcnow()
+        })
+        
+        logger.info(f"Successfully generated weekly summary for repository {repository.full_name}")
+        
+    except Exception as e:
+        logger.error(f"Error generating weekly summary for repository {repository_id}: {e}")
+        _summarization_status[repository_id].update({
+            "status": "failed",
+            "progress_message": "Summary generation failed",
+            "completed_at": datetime.utcnow(),
+            "error_message": str(e)
+        })
+
+
+@router.post("/repositories/{repository_id}/summaries/generate-weekly", status_code=status.HTTP_202_ACCEPTED)
+async def generate_weekly_summary(
+    repository_id: int,
+    request: WeeklySummaryRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate an AI-powered weekly summary for a repository based on commits from the last week.
+    This endpoint starts the generation process in the background and returns immediately.
+    
+    Args:
+        repository_id: Repository ID
+        request: Weekly summary generation request
+        background_tasks: FastAPI background tasks
+        db: Database session
+        
+    Returns:
+        Dict containing the status and information about the background task
+    """
+    try:
+        # Check if repository exists
+        repository = db.query(Repository).filter(Repository.id == repository_id).first()
+        if not repository:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Repository with ID {repository_id} not found"
+            )
+        
+        # Check if LLM service is available
+        if not llm_service.is_model_loaded:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI summary generation is currently unavailable. LLM model is not loaded."
+            )
+        
+        # Check if there's already a generation in progress
+        if repository_id in _summarization_status and _summarization_status[repository_id]["status"] == "generating":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Weekly summary generation is already in progress for this repository"
+            )
+        
+        # Initialize status
+        _summarization_status[repository_id] = {
+            "status": "generating",
+            "summary_type": request.summary_type,
+            "progress_message": "Starting weekly summary generation...",
+            "started_at": datetime.utcnow(),
+            "completed_at": None,
+            "error_message": None
+        }
+        
+        # Start background task
+        background_tasks.add_task(
+            _generate_weekly_summary_background,
+            repository_id,
+            request.summary_type,
+            db
+        )
+        
+        logger.info(f"Started weekly summary generation for repository {repository.full_name}")
+        
+        return {
+            "repository_id": repository_id,
+            "repository_name": repository.full_name,
+            "status": "generating",
+            "summary_type": request.summary_type,
+            "message": "Weekly summary generation started. Use the status endpoint to check progress.",
+            "status_endpoint": f"/repositories/{repository_id}/summaries/weekly-status"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting weekly summary generation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start weekly summary generation"
+        )
+
+
+@router.get("/repositories/{repository_id}/summaries/weekly-status", response_model=SummaryStatusResponse)
+async def get_weekly_summary_status(repository_id: int, db: Session = Depends(get_db)):
+    """
+    Get the status of weekly summary generation for a repository.
+    
+    Args:
+        repository_id: Repository ID
+        db: Database session
+        
+    Returns:
+        SummaryStatusResponse: Current status of weekly summary generation
+    """
+    try:
+        # Check if repository exists
+        repository = db.query(Repository).filter(Repository.id == repository_id).first()
+        if not repository:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Repository with ID {repository_id} not found"
+            )
+        
+        # Get status from global dictionary
+        if repository_id in _summarization_status:
+            status_info = _summarization_status[repository_id]
+            return SummaryStatusResponse(
+                repository_id=repository_id,
+                status=status_info["status"],
+                summary_type=status_info.get("summary_type"),
+                progress_message=status_info.get("progress_message"),
+                started_at=status_info.get("started_at"),
+                completed_at=status_info.get("completed_at"),
+                error_message=status_info.get("error_message")
+            )
+        else:
+            # No generation in progress or completed
+            return SummaryStatusResponse(
+                repository_id=repository_id,
+                status="idle",
+                summary_type=None,
+                progress_message="No weekly summary generation in progress",
+                started_at=None,
+                completed_at=None,
+                error_message=None
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting weekly summary status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get weekly summary status"
+        )
+
+
 @router.get("/repositories/{repository_id}/summaries/ai-status")
 async def get_ai_summary_status(repository_id: int, db: Session = Depends(get_db)):
     """
@@ -607,14 +918,21 @@ async def get_ai_summary_status(repository_id: int, db: Session = Depends(get_db
             Summary.model_used.isnot(None)
         ).count()
         
+        # Count weekly summaries
+        weekly_summaries_count = db.query(Summary).filter(
+            Summary.repository_id == repository_id,
+            Summary.summary_type.in_(["weekly", "commits"])
+        ).count()
+        
         return {
             "repository_id": repository_id,
             "repository_name": repository.full_name,
             "ai_available": llm_status["is_model_loaded"],
-            "ollama_healthy": llm_status["ollama_healthy"],
             "model_name": llm_status["model_name"],
             "existing_ai_summaries": ai_summaries_count,
+            "existing_weekly_summaries": weekly_summaries_count,
             "supported_summary_types": ["overview", "technical", "business"],
+            "supported_weekly_types": ["weekly", "commits"],
             "llm_service_status": llm_status
         }
         

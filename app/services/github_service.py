@@ -5,7 +5,7 @@ GitHub API integration service for fetching repository data.
 import logging
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 
 import httpx
@@ -43,6 +43,27 @@ class GitHubRepositoryData:
     created_at: datetime
     updated_at: datetime
     pushed_at: Optional[datetime]
+
+
+@dataclass
+class GitHubCommitData:
+    """Data class for GitHub commit information."""
+    sha: str
+    message: str
+    author_name: str
+    author_email: str
+    author_date: datetime
+    committer_name: str
+    committer_email: str
+    committer_date: datetime
+    url: str
+    html_url: str
+    additions: int = 0
+    deletions: int = 0
+    total_changes: int = 0
+    files_changed: Optional[List[Dict[str, Any]]] = None
+    parents: Optional[List[str]] = None
+    verified: bool = False
 
 
 class GitHubAPIError(Exception):
@@ -289,6 +310,154 @@ class GitHubService:
                 github_error="parse_error"
             )
     
+    async def get_commits_last_week(self, owner: str, repo: str) -> List[GitHubCommitData]:
+        """
+        Fetch commits from the last 7 days for a GitHub repository.
+        
+        Args:
+            owner: Repository owner username
+            repo: Repository name
+            
+        Returns:
+            List[GitHubCommitData]: List of commits from the last week
+            
+        Raises:
+            GitHubAPIError: If commits cannot be fetched or API error occurs
+        """
+        try:
+            # Calculate date 7 days ago
+            from datetime import datetime, timedelta
+            since_date = (datetime.utcnow() - timedelta(days=7)).isoformat() + "Z"
+            
+            url = f"{self.api_url}/repos/{owner}/{repo}/commits"
+            params = {
+                "since": since_date,
+                "per_page": 100  # GitHub API max per page
+            }
+            
+            logger.info(f"Fetching commits for {owner}/{repo} since {since_date}")
+            
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(url, headers=self.headers, params=params)
+                
+                if response.status_code == 200:
+                    commits_data = response.json()
+                    commits = []
+                    
+                    for commit_data in commits_data:
+                        try:
+                            commit = self._parse_commit_data(commit_data)
+                            commits.append(commit)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse commit {commit_data.get('sha', 'unknown')}: {e}")
+                            continue
+                    
+                    logger.info(f"Successfully fetched {len(commits)} commits from last week for {owner}/{repo}")
+                    return commits
+                    
+                elif response.status_code == 404:
+                    raise GitHubAPIError(
+                        f"Repository {owner}/{repo} not found or is private",
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        github_error="repository_not_found"
+                    )
+                elif response.status_code == 403:
+                    error_data = response.json() if response.content else {}
+                    if "rate limit" in error_data.get("message", "").lower():
+                        raise GitHubAPIError(
+                            "GitHub API rate limit exceeded. Please try again later.",
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            github_error="rate_limit_exceeded"
+                        )
+                    else:
+                        raise GitHubAPIError(
+                            f"Access forbidden to repository {owner}/{repo}",
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            github_error="access_forbidden"
+                        )
+                else:
+                    error_data = response.json() if response.content else {}
+                    error_message = error_data.get("message", f"HTTP {response.status_code}")
+                    
+                    logger.error(f"GitHub API error fetching commits for {owner}/{repo}: {error_message}")
+                    raise GitHubAPIError(
+                        f"GitHub API error: {error_message}",
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        github_error="api_error"
+                    )
+                    
+        except GitHubAPIError:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error fetching commits for {owner}/{repo}: {e}")
+            raise GitHubAPIError(
+                "An unexpected error occurred while fetching commits",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                github_error="unexpected_error"
+            )
+    
+    def _parse_commit_data(self, data: Dict[str, Any]) -> GitHubCommitData:
+        """
+        Parse GitHub API commit response data into GitHubCommitData object.
+        
+        Args:
+            data: Raw GitHub API commit response data
+            
+        Returns:
+            GitHubCommitData: Parsed commit data
+        """
+        try:
+            commit_info = data.get("commit", {})
+            author_info = commit_info.get("author", {})
+            committer_info = commit_info.get("committer", {})
+            
+            # Parse datetime fields
+            author_date = datetime.fromisoformat(author_info.get("date", "").replace("Z", "+00:00"))
+            committer_date = datetime.fromisoformat(committer_info.get("date", "").replace("Z", "+00:00"))
+            
+            # Extract file changes if available
+            files_changed = None
+            if "files" in data:
+                files_changed = data["files"]
+            
+            # Extract parent commits
+            parents = None
+            if "parents" in data:
+                parents = [parent.get("sha") for parent in data["parents"]]
+            
+            # Calculate total changes
+            stats = data.get("stats", {})
+            additions = stats.get("additions", 0)
+            deletions = stats.get("deletions", 0)
+            total_changes = additions + deletions
+            
+            return GitHubCommitData(
+                sha=data["sha"],
+                message=commit_info.get("message", ""),
+                author_name=author_info.get("name", ""),
+                author_email=author_info.get("email", ""),
+                author_date=author_date,
+                committer_name=committer_info.get("name", ""),
+                committer_email=committer_info.get("email", ""),
+                committer_date=committer_date,
+                url=data.get("url", ""),
+                html_url=data.get("html_url", ""),
+                additions=additions,
+                deletions=deletions,
+                total_changes=total_changes,
+                files_changed=files_changed,
+                parents=parents,
+                verified=commit_info.get("verification", {}).get("verified", False)
+            )
+            
+        except (KeyError, ValueError, TypeError) as e:
+            logger.error(f"Error parsing GitHub commit data: {e}")
+            raise GitHubAPIError(
+                "Failed to parse GitHub commit data",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                github_error="parse_error"
+            )
+
     async def get_rate_limit_info(self) -> Dict[str, Any]:
         """
         Get current GitHub API rate limit information.

@@ -155,16 +155,10 @@ function updateServiceStatuses(services) {
         databaseElement.innerHTML = createServiceStatusHTML(services.database, 'Database');
     }
     
-    // Update Redis status
-    const redisElement = document.getElementById('redisStatus');
-    if (redisElement && services.redis) {
-        redisElement.innerHTML = createServiceStatusHTML(services.redis, 'Redis');
-    }
-    
-    // Update Ollama status
-    const ollamaElement = document.getElementById('ollamaStatus');
-    if (ollamaElement && services.ollama) {
-        ollamaElement.innerHTML = createServiceStatusHTML(services.ollama, 'Ollama');
+    // Update Hugging Face LLM status
+    const huggingfaceLlmElement = document.getElementById('huggingfaceLlmStatus');
+    if (huggingfaceLlmElement && services.huggingface_llm) {
+        huggingfaceLlmElement.innerHTML = createServiceStatusHTML(services.huggingface_llm, 'Hugging Face LLM');
     }
 }
 
@@ -286,12 +280,8 @@ async function testDatabase() {
     await testService('database', 'Database');
 }
 
-async function testRedis() {
-    await testService('redis', 'Redis');
-}
-
-async function testOllama() {
-    await testService('ollama', 'Ollama');
+async function testHuggingFaceLLM() {
+    await testService('llm', 'Hugging Face LLM');
 }
 
 // Generic service test function
@@ -599,10 +589,10 @@ function updateRepositoryList(repositories) {
                 </div>
             </div>
             <div class="repo-actions">
-                <button onclick="toggleMonitoring(${repo.id})"
-                        class="btn ${repo.is_active ? 'btn-warning' : 'btn-success'}">
-                    <i class="fas ${repo.is_active ? 'fa-pause' : 'fa-play'}"></i>
-                    ${repo.is_active ? 'Pause' : 'Resume'}
+                <button onclick="generateWeeklySummary(${repo.id})"
+                        class="btn btn-primary" id="summarize-btn-${repo.id}">
+                    <i class="fas fa-file-alt"></i>
+                    Summarize
                 </button>
                 <button onclick="removeRepository(${repo.id})" class="btn btn-danger">
                     <i class="fas fa-trash"></i>
@@ -686,6 +676,161 @@ async function removeRepository(repoId) {
     } finally {
         showLoading(false);
     }
+}
+
+// Weekly Summary Generation Functions
+async function generateWeeklySummary(repoId) {
+    try {
+        const button = document.getElementById(`summarize-btn-${repoId}`);
+        if (!button) return;
+        
+        // Update button to loading state
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+        button.className = 'btn btn-secondary';
+        
+        showSuccess('Starting weekly summary generation...');
+        
+        const response = await fetch(`${API_BASE_URL}/repositories/${repoId}/summaries/generate-weekly`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                summary_type: "weekly"
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log('Weekly summary generation started:', result);
+        
+        // Start polling for status
+        pollSummaryStatus(repoId);
+        
+    } catch (error) {
+        console.error('Failed to generate weekly summary:', error);
+        showError(`Failed to generate weekly summary: ${error.message}`);
+        
+        // Reset button state
+        const button = document.getElementById(`summarize-btn-${repoId}`);
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-file-alt"></i> Summarize';
+            button.className = 'btn btn-primary';
+        }
+    }
+}
+
+async function pollSummaryStatus(repoId) {
+    const maxAttempts = 60; // Poll for up to 5 minutes (60 * 5 seconds)
+    let attempts = 0;
+    
+    const pollInterval = setInterval(async () => {
+        try {
+            attempts++;
+            
+            const response = await fetch(`${API_BASE_URL}/repositories/${repoId}/summaries/weekly-status`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const status = await response.json();
+            console.log('Summary status:', status);
+            
+            const button = document.getElementById(`summarize-btn-${repoId}`);
+            
+            if (status.status === 'completed') {
+                clearInterval(pollInterval);
+                
+                // Update button to success state
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="fas fa-check"></i> Completed';
+                    button.className = 'btn btn-success';
+                    
+                    // Reset button after 3 seconds
+                    setTimeout(() => {
+                        button.innerHTML = '<i class="fas fa-file-alt"></i> Summarize';
+                        button.className = 'btn btn-primary';
+                    }, 3000);
+                }
+                
+                showSuccess('Weekly summary generated successfully!');
+                
+                // Refresh summaries list
+                loadSummaries();
+                
+            } else if (status.status === 'failed') {
+                clearInterval(pollInterval);
+                
+                // Update button to error state
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Failed';
+                    button.className = 'btn btn-danger';
+                    
+                    // Reset button after 3 seconds
+                    setTimeout(() => {
+                        button.innerHTML = '<i class="fas fa-file-alt"></i> Summarize';
+                        button.className = 'btn btn-primary';
+                    }, 3000);
+                }
+                
+                showError(`Summary generation failed: ${status.message || 'Unknown error'}`);
+                
+            } else if (status.status === 'in_progress') {
+                // Update button with progress message
+                if (button && status.message) {
+                    const progressMessages = {
+                        'fetching_commits': 'Fetching commits...',
+                        'generating_summary': 'Generating AI summary...',
+                        'saving_summary': 'Saving summary...'
+                    };
+                    
+                    const displayMessage = progressMessages[status.message] || status.message;
+                    button.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${displayMessage}`;
+                }
+                
+            } else if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                
+                // Timeout - reset button
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="fas fa-clock"></i> Timeout';
+                    button.className = 'btn btn-warning';
+                    
+                    // Reset button after 3 seconds
+                    setTimeout(() => {
+                        button.innerHTML = '<i class="fas fa-file-alt"></i> Summarize';
+                        button.className = 'btn btn-primary';
+                    }, 3000);
+                }
+                
+                showWarning('Summary generation is taking longer than expected. Please try again later.');
+            }
+            
+        } catch (error) {
+            console.error('Failed to poll summary status:', error);
+            clearInterval(pollInterval);
+            
+            // Reset button state
+            const button = document.getElementById(`summarize-btn-${repoId}`);
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = '<i class="fas fa-file-alt"></i> Summarize';
+                button.className = 'btn btn-primary';
+            }
+            
+            showError('Failed to check summary generation status');
+        }
+    }, 5000); // Poll every 5 seconds
 }
 
 async function loadSummaries(repositoryId = null) {
@@ -796,9 +941,9 @@ function updateSummariesList(summaries) {
 // Export functions for global access
 window.refreshHealth = refreshHealth;
 window.testDatabase = testDatabase;
-window.testRedis = testRedis;
-window.testOllama = testOllama;
+window.testHuggingFaceLLM = testHuggingFaceLLM;
 window.switchTab = switchTab;
 window.addRepository = addRepository;
 window.toggleMonitoring = toggleMonitoring;
 window.removeRepository = removeRepository;
+window.generateWeeklySummary = generateWeeklySummary;

@@ -8,12 +8,11 @@ from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-import redis
-import httpx
 import logging
 
 from app.config import settings
 from app.database import db_manager
+from app.services.llm_service import llm_service
 
 logger = logging.getLogger(__name__)
 
@@ -70,66 +69,39 @@ async def check_database() -> ServiceStatus:
         )
 
 
-async def check_redis() -> ServiceStatus:
-    """Check Redis connectivity and health."""
+async def check_huggingface_llm() -> ServiceStatus:
+    """Check Hugging Face LLM service health."""
     start_time = time.time()
     try:
-        redis_client = redis.from_url(settings.REDIS_URL)
-        await asyncio.get_event_loop().run_in_executor(None, redis_client.ping)
+        # Get service status from LLM service
+        service_status = await llm_service.get_service_status()
         response_time = (time.time() - start_time) * 1000
         
-        # Get Redis info
-        info = await asyncio.get_event_loop().run_in_executor(None, redis_client.info)
-        redis_client.close()
-        
-        return ServiceStatus(
-            status="healthy",
-            response_time=response_time,
-            details={
-                "version": info.get("redis_version", "unknown"),
-                "connected_clients": info.get("connected_clients", 0),
-                "used_memory_human": info.get("used_memory_human", "unknown")
-            }
-        )
+        if service_status.get("is_model_loaded") and service_status.get("model_healthy"):
+            return ServiceStatus(
+                status="healthy",
+                response_time=response_time,
+                details={
+                    "model_name": service_status.get("model_name"),
+                    "device": service_status.get("device"),
+                    "max_length": service_status.get("max_length"),
+                    "model_loaded": service_status.get("is_model_loaded"),
+                    "model_healthy": service_status.get("model_healthy")
+                }
+            )
+        else:
+            return ServiceStatus(
+                status="unhealthy",
+                response_time=response_time,
+                details={
+                    "error": "Model not loaded or unhealthy",
+                    "model_loaded": service_status.get("is_model_loaded", False),
+                    "model_healthy": service_status.get("model_healthy", False)
+                }
+            )
     except Exception as e:
         response_time = (time.time() - start_time) * 1000
-        logger.error(f"Redis health check error: {e}")
-        return ServiceStatus(
-            status="unhealthy",
-            response_time=response_time,
-            details={"error": str(e)}
-        )
-
-
-async def check_ollama() -> ServiceStatus:
-    """Check Ollama service connectivity and health."""
-    start_time = time.time()
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{settings.OLLAMA_URL}/api/tags")
-            response_time = (time.time() - start_time) * 1000
-            
-            if response.status_code == 200:
-                data = response.json()
-                models = data.get("models", [])
-                return ServiceStatus(
-                    status="healthy",
-                    response_time=response_time,
-                    details={
-                        "url": settings.OLLAMA_URL,
-                        "available_models": len(models),
-                        "models": [model.get("name", "unknown") for model in models[:5]]  # Show first 5
-                    }
-                )
-            else:
-                return ServiceStatus(
-                    status="unhealthy",
-                    response_time=response_time,
-                    details={"error": f"HTTP {response.status_code}"}
-                )
-    except Exception as e:
-        response_time = (time.time() - start_time) * 1000
-        logger.error(f"Ollama health check error: {e}")
+        logger.error(f"Hugging Face LLM health check error: {e}")
         return ServiceStatus(
             status="unhealthy",
             response_time=response_time,
@@ -150,12 +122,11 @@ async def health_check():
         
         # Check all services concurrently
         db_task = asyncio.create_task(check_database())
-        redis_task = asyncio.create_task(check_redis())
-        ollama_task = asyncio.create_task(check_ollama())
+        llm_task = asyncio.create_task(check_huggingface_llm())
         
         # Wait for all health checks to complete
-        db_status, redis_status, ollama_status = await asyncio.gather(
-            db_task, redis_task, ollama_task, return_exceptions=True
+        db_status, llm_status = await asyncio.gather(
+            db_task, llm_task, return_exceptions=True
         )
         
         # Handle any exceptions from the health checks
@@ -170,23 +141,14 @@ async def health_check():
         else:
             services["database"] = db_status
             
-        if isinstance(redis_status, Exception):
-            services["redis"] = ServiceStatus(
+        if isinstance(llm_status, Exception):
+            services["huggingface_llm"] = ServiceStatus(
                 status="error",
                 response_time=0,
-                details={"error": str(redis_status)}
+                details={"error": str(llm_status)}
             )
         else:
-            services["redis"] = redis_status
-            
-        if isinstance(ollama_status, Exception):
-            services["ollama"] = ServiceStatus(
-                status="error",
-                response_time=0,
-                details={"error": str(ollama_status)}
-            )
-        else:
-            services["ollama"] = ollama_status
+            services["huggingface_llm"] = llm_status
         
         # Determine overall status
         all_healthy = all(
@@ -270,37 +232,19 @@ async def database_health():
         )
 
 
-@router.get("/health/redis")
-async def redis_health():
-    """Get detailed Redis health information."""
+@router.get("/health/llm")
+async def llm_health():
+    """Get detailed Hugging Face LLM service health information."""
     try:
-        redis_status = await check_redis()
+        llm_status = await check_huggingface_llm()
         return {
-            "service": "redis",
+            "service": "huggingface_llm",
             "timestamp": datetime.utcnow(),
-            **redis_status.dict()
+            **llm_status.dict()
         }
     except Exception as e:
-        logger.error(f"Redis health check error: {e}")
+        logger.error(f"Hugging Face LLM health check error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Redis health check failed: {str(e)}"
-        )
-
-
-@router.get("/health/ollama")
-async def ollama_health():
-    """Get detailed Ollama service health information."""
-    try:
-        ollama_status = await check_ollama()
-        return {
-            "service": "ollama",
-            "timestamp": datetime.utcnow(),
-            **ollama_status.dict()
-        }
-    except Exception as e:
-        logger.error(f"Ollama health check error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ollama health check failed: {str(e)}"
+            detail=f"Hugging Face LLM health check failed: {str(e)}"
         )

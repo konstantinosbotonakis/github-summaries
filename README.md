@@ -1,22 +1,21 @@
 # GitHub Repository Monitor
 
-A comprehensive Docker-based GitHub repository monitoring application built with FastAPI, PostgreSQL, Redis, and Ollama LLM integration.
+A comprehensive GitHub repository monitoring application built with FastAPI, SQLite, and Hugging Face Transformers for AI-powered analysis.
 
 ## 🚀 Features
 
 - **FastAPI Backend**: Modern, fast web framework with automatic API documentation
-- **PostgreSQL Database**: Robust data storage for repositories, commits, and summaries
-- **Redis Cache**: High-performance caching layer
-- **Ollama LLM Integration**: AI-powered repository analysis and summaries
+- **SQLite Database**: Lightweight, file-based database for repositories, commits, and summaries
+- **Hugging Face Transformers**: AI-powered repository analysis and summaries using local models
 - **Health Monitoring**: Comprehensive health checks for all services
 - **Modern Frontend**: Responsive web interface with real-time status updates
-- **Docker Compose**: Complete containerized setup for easy deployment
+- **Local Development**: Easy setup without external dependencies
 
 ## 📋 Prerequisites
 
-- Docker and Docker Compose installed
+- Python 3.8+ installed
 - Git (for cloning the repository)
-- At least 4GB of available RAM (recommended for Ollama)
+- At least 2GB of available RAM (recommended for AI models)
 
 ## 🛠️ Quick Start
 
@@ -32,11 +31,17 @@ A comprehensive Docker-based GitHub repository monitoring application built with
    ```
    
    Edit the `.env` file and update the following variables:
-   - `POSTGRES_PASSWORD`: Set a secure password for PostgreSQL
    - `SECRET_KEY`: Generate a secure secret key for the application
    - `GITHUB_TOKEN`: Add your GitHub personal access token (optional but recommended)
+   - `DATABASE_URL`: SQLite database path (default: sqlite:///./test.db)
 
-3. **Start the application**
+3. **Install dependencies and start the application**
+   ```bash
+   pip install -r requirements.txt
+   python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+   
+   Or using Docker:
    ```bash
    docker-compose up -d
    ```
@@ -81,18 +86,13 @@ A comprehensive Docker-based GitHub repository monitoring application built with
 - **Health Check**: `/api/v1/health`
 - **Features**: API endpoints, health monitoring, frontend serving
 
-### PostgreSQL Database
-- **Port**: 5432
-- **Database**: `github_monitor`
+### SQLite Database
+- **File**: `./test.db`
 - **Features**: Repository, commit, and summary data storage
 
-### Redis Cache
-- **Port**: 6379
-- **Features**: Caching, session storage, background task queuing
-
-### Ollama LLM
-- **Port**: 11434
-- **Features**: AI-powered text analysis and summary generation
+### Hugging Face Models
+- **Cache Directory**: `./models`
+- **Features**: AI-powered text analysis and summary generation using local models
 
 ## 📊 Health Monitoring
 
@@ -101,10 +101,8 @@ The application includes comprehensive health monitoring:
 - **Overall Health**: `/api/v1/health` - Complete system status
 - **Liveness Probe**: `/api/v1/health/live` - Basic application health
 - **Readiness Probe**: `/api/v1/health/ready` - Service readiness check
-- **Individual Services**: 
+- **Individual Services**:
   - `/api/v1/health/database` - Database connectivity
-  - `/api/v1/health/redis` - Redis connectivity  
-  - `/api/v1/health/ollama` - Ollama service status
 
 ## 🔑 Environment Variables
 
@@ -112,9 +110,10 @@ Key environment variables (see `.env.example` for complete list):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `POSTGRES_PASSWORD` | PostgreSQL password | `your_secure_password_here` |
+| `DATABASE_URL` | SQLite database path | `sqlite:///./test.db` |
 | `SECRET_KEY` | Application secret key | `your_secret_key_here_change_in_production` |
 | `GITHUB_TOKEN` | GitHub API token | `` |
+| `HF_MODEL_NAME` | Hugging Face model name | `google/flan-t5-small` |
 | `DEBUG` | Debug mode | `true` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 
@@ -134,12 +133,7 @@ Key environment variables (see `.env.example` for complete list):
 
 3. **Access database**
    ```bash
-   docker-compose exec db psql -U postgres -d github_monitor
-   ```
-
-4. **Access Redis**
-   ```bash
-   docker-compose exec redis redis-cli
+   sqlite3 test.db
    ```
 
 ### Making Changes
@@ -155,8 +149,6 @@ Key environment variables (see `.env.example` for complete list):
 - `GET /api/v1/health/live` - Liveness probe
 - `GET /api/v1/health/ready` - Readiness probe
 - `GET /api/v1/health/database` - Database health
-- `GET /api/v1/health/redis` - Redis health
-- `GET /api/v1/health/ollama` - Ollama health
 
 ### Application Endpoints
 - `GET /` - Frontend interface
@@ -169,16 +161,16 @@ Key environment variables (see `.env.example` for complete list):
 ### Common Issues
 
 1. **Port conflicts**
-   - Ensure ports 8000, 5432, 6379, and 11434 are available
-   - Modify port mappings in `docker-compose.yml` if needed
+   - Ensure port 8000 is available
+   - Modify port in startup command if needed
 
-2. **Memory issues with Ollama**
-   - Ollama requires significant RAM (2-4GB minimum)
+2. **Memory issues with AI models**
+   - Hugging Face models require RAM (1-2GB minimum)
    - Consider using a smaller model or increasing available memory
 
 3. **Database connection issues**
-   - Check PostgreSQL container logs: `docker-compose logs db`
-   - Verify environment variables in `.env` file
+   - Check SQLite file permissions
+   - Verify DATABASE_URL in `.env` file
 
 4. **Permission issues**
    - Ensure Docker has proper permissions

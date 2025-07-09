@@ -1,9 +1,7 @@
 {
   "database": {
-    "host": "db",
-    "port": 5432,
-    "name": "github_monitor",
-    "user": "postgres",
-    "password": "github_monitor_2024"
+    "type": "sqlite",
+    "path": "./test.db",
+    "description": "SQLite database for local development"
   }
 }

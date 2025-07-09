@@ -65,26 +65,15 @@
                     </div>
                 </div>
 
-                <div class="card">
-                    <div class="card-header">
-                        <i class="fas fa-memory"></i>
-                        <h3>Redis Cache</h3>
-                    </div>
-                    <div class="card-content">
-                        <div class="service-status" id="redisStatus">
-                            <div class="loading">Checking Redis...</div>
-                        </div>
-                    </div>
-                </div>
 
                 <div class="card">
                     <div class="card-header">
                         <i class="fas fa-robot"></i>
-                        <h3>Ollama LLM</h3>
+                        <h3>Hugging Face LLM</h3>
                     </div>
                     <div class="card-content">
-                        <div class="service-status" id="ollamaStatus">
-                            <div class="loading">Checking Ollama...</div>
+                        <div class="service-status" id="huggingfaceLlmStatus">
+                            <div class="loading">Checking Hugging Face LLM...</div>
                         </div>
                     </div>
                 </div>
@@ -136,13 +125,9 @@
                                 <i class="fas fa-database"></i>
                                 Test Database Connection
                             </button>
-                            <button class="btn btn-secondary" onclick="testRedis()">
-                                <i class="fas fa-memory"></i>
-                                Test Redis Connection
-                            </button>
-                            <button class="btn btn-secondary" onclick="testOllama()">
+                            <button class="btn btn-secondary" onclick="testHuggingFaceLLM()">
                                 <i class="fas fa-robot"></i>
-                                Test Ollama Service
+                                Test Hugging Face LLM
                             </button>
                         </div>
                     </div>
@@ -261,7 +246,7 @@
         <!-- Footer -->
         <footer class="footer">
             <div class="footer-content">
-                <p>&copy; 2024 GitHub Repository Monitor. Built with FastAPI, PostgreSQL, Redis, and Ollama.</p>
+                <p>&copy; 2024 GitHub Repository Monitor. Built with FastAPI, SQLite, and Hugging Face Transformers.</p>
                 <div class="footer-links">
                     <a href="https://github.com" target="_blank">
                         <i class="fab fa-github"></i>
