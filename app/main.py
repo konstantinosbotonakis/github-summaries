@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from app.config import settings
 from app.database import engine, create_tables, connect_database, disconnect_database
 from app.api.health import router as health_router
+from app.api.repositories import router as repositories_router
 
 
 # Configure logging
@@ -62,6 +63,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health_router, prefix=settings.API_V1_STR, tags=["health"])
+app.include_router(repositories_router, prefix=settings.API_V1_STR, tags=["repositories"])
 
 # Mount static files for frontend
 app.mount("/static", StaticFiles(directory="frontend"), name="static")

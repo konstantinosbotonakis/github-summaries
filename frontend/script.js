@@ -64,12 +64,19 @@ async function loadAppInfo() {
 // Load health status
 async function loadHealthStatus() {
     try {
+        console.log('DEBUG: Loading health status from API...');
+        console.log('DEBUG: Health URL:', `${API_BASE_URL}/health`);
         const response = await fetch(`${API_BASE_URL}/health`);
+        console.log('DEBUG: Health response status:', response.status);
+        console.log('DEBUG: Health response ok:', response.ok);
+        
         const data = await response.json();
+        console.log('DEBUG: Health data:', data);
         
         updateOverallStatus(data);
         updateServiceStatuses(data.services);
     } catch (error) {
+        console.error('DEBUG: Health status error details:', error);
         console.error('Failed to load health status:', error);
         updateOverallStatus({ status: 'unhealthy' });
         showError('Failed to load health status');
@@ -491,37 +498,32 @@ function switchTab(tabName) {
 // Repository Management Functions
 async function loadRepositories() {
     try {
-        // Mock data for now - replace with actual API call when backend is ready
-        const mockRepositories = [
-            {
-                id: 1,
-                full_name: "example/demo-repo",
-                description: "A demonstration repository for testing",
-                stars_count: 42,
-                forks_count: 8,
-                language: "JavaScript",
-                is_active: true,
-                owner_login: "example"
-            },
-            {
-                id: 2,
-                full_name: "test/another-repo",
-                description: "Another test repository",
-                stars_count: 15,
-                forks_count: 3,
-                language: "Python",
-                is_active: false,
-                owner_login: "test"
-            }
-        ];
+        console.log('DEBUG: Loading repositories from API...');
+        const response = await fetch(`${API_BASE_URL}/repositories`);
         
-        updateRepositoryList(mockRepositories);
-        updateRepositoryStats(mockRepositories);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const responseData = await response.json();
+        console.log('DEBUG: Raw API response:', responseData);
+        console.log('DEBUG: Response type:', typeof responseData);
+        console.log('DEBUG: Is array?', Array.isArray(responseData));
+        
+        // Extract repositories array from response object
+        const repositories = responseData.repositories || responseData;
+        console.log('DEBUG: Extracted repositories:', repositories);
+        console.log('DEBUG: Repositories type:', typeof repositories);
+        console.log('DEBUG: Repositories is array?', Array.isArray(repositories));
+        
+        updateRepositoryList(repositories);
+        updateRepositoryStats(repositories);
     } catch (error) {
         console.error('Failed to load repositories:', error);
+        showError('Failed to load repositories from server');
         const listElement = document.getElementById('repositoryList');
         if (listElement) {
-            listElement.innerHTML = '<div class="error">Failed to load repositories</div>';
+            listElement.innerHTML = '<div class="error">Failed to load repositories. Please check if the backend server is running.</div>';
         }
     }
 }
@@ -543,15 +545,28 @@ async function addRepository() {
     try {
         showLoading(true);
         
-        // Mock API call - replace with actual implementation
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        const response = await fetch(`${API_BASE_URL}/repositories`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                github_url: repoUrl
+            })
+        });
         
-        showSuccess('Repository added successfully! (Mock implementation)');
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        showSuccess('Repository added successfully!');
         document.getElementById('repoUrl').value = '';
         loadRepositories();
     } catch (error) {
         console.error('Failed to add repository:', error);
-        showError('Failed to add repository');
+        showError(`Failed to add repository: ${error.message}`);
     } finally {
         showLoading(false);
     }
@@ -620,14 +635,24 @@ async function toggleMonitoring(repoId) {
     try {
         showLoading(true);
         
-        // Mock API call
-        await new Promise(resolve => setTimeout(resolve, 500));
+        const response = await fetch(`${API_BASE_URL}/repositories/${repoId}/toggle`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
         
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
         showSuccess('Repository monitoring status updated');
         loadRepositories();
     } catch (error) {
         console.error('Failed to toggle monitoring:', error);
-        showError('Failed to update monitoring status');
+        showError(`Failed to update monitoring status: ${error.message}`);
     } finally {
         showLoading(false);
     }
@@ -641,47 +666,80 @@ async function removeRepository(repoId) {
     try {
         showLoading(true);
         
-        // Mock API call
-        await new Promise(resolve => setTimeout(resolve, 500));
+        const response = await fetch(`${API_BASE_URL}/repositories/${repoId}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        }
         
         showSuccess('Repository removed successfully');
         loadRepositories();
     } catch (error) {
         console.error('Failed to remove repository:', error);
-        showError('Failed to remove repository');
+        showError(`Failed to remove repository: ${error.message}`);
     } finally {
         showLoading(false);
     }
 }
 
-async function loadSummaries() {
+async function loadSummaries(repositoryId = null) {
     try {
-        // Mock summaries data
-        const mockSummaries = [
-            {
-                id: 1,
-                title: "Recent commits improve performance",
-                content: "The latest commits to the main branch include several performance optimizations and bug fixes...",
-                repository_name: "example/demo-repo",
-                created_at: new Date().toISOString(),
-                tags: ["performance", "optimization", "bugfix"]
-            },
-            {
-                id: 2,
-                title: "New feature implementation",
-                content: "A new authentication system has been implemented with enhanced security features...",
-                repository_name: "test/another-repo",
-                created_at: new Date(Date.now() - 86400000).toISOString(),
-                tags: ["feature", "security", "authentication"]
-            }
-        ];
+        let allSummaries = [];
         
-        updateSummariesList(mockSummaries);
+        if (repositoryId) {
+            // Load summaries for a specific repository
+            const response = await fetch(`${API_BASE_URL}/repositories/${repositoryId}/summaries`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            allSummaries = await response.json();
+        } else {
+            // Load summaries for all repositories
+            const reposResponse = await fetch(`${API_BASE_URL}/repositories`);
+            
+            if (!reposResponse.ok) {
+                throw new Error(`HTTP error! status: ${reposResponse.status}`);
+            }
+            
+            const repositories = await reposResponse.json();
+            
+            // Load summaries for each repository
+            const summaryPromises = repositories.map(async (repo) => {
+                try {
+                    const summariesResponse = await fetch(`${API_BASE_URL}/repositories/${repo.id}/summaries`);
+                    if (summariesResponse.ok) {
+                        const summaries = await summariesResponse.json();
+                        return summaries.map(summary => ({
+                            ...summary,
+                            repository_name: repo.full_name
+                        }));
+                    }
+                    return [];
+                } catch (error) {
+                    console.warn(`Failed to load summaries for repository ${repo.full_name}:`, error);
+                    return [];
+                }
+            });
+            
+            const summaryArrays = await Promise.all(summaryPromises);
+            allSummaries = summaryArrays.flat();
+        }
+        
+        updateSummariesList(allSummaries);
     } catch (error) {
         console.error('Failed to load summaries:', error);
+        showError('Failed to load summaries from server');
         const summariesElement = document.getElementById('summariesList');
         if (summariesElement) {
-            summariesElement.innerHTML = '<div class="error">Failed to load summaries</div>';
+            summariesElement.innerHTML = '<div class="error">Failed to load summaries. Please check if the backend server is running.</div>';
         }
     }
 }

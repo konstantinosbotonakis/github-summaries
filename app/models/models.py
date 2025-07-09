@@ -107,7 +107,7 @@ class Summary(Base):
     model_version = Column(String(50), nullable=True)
     processing_time = Column(Integer, nullable=True)  # in milliseconds
     token_count = Column(Integer, nullable=True)
-    metadata = Column(JSON, nullable=True)
+    summary_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     is_published = Column(Boolean, default=False)
