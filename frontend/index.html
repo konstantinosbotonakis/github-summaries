@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Repository Monitor</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fab fa-github"></i>
+                    <h1>GitHub Repository Monitor</h1>
+                </div>
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Checking...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard Cards -->
+            <section class="dashboard">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-heartbeat"></i>
+                        <h3>System Health</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="health-status" id="healthStatus">
+                            <div class="loading">Loading health status...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-database"></i>
+                        <h3>Database</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="service-status" id="databaseStatus">
+                            <div class="loading">Checking database...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-memory"></i>
+                        <h3>Redis Cache</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="service-status" id="redisStatus">
+                            <div class="loading">Checking Redis...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-robot"></i>
+                        <h3>Ollama LLM</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="service-status" id="ollamaStatus">
+                            <div class="loading">Checking Ollama...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- API Information -->
+            <section class="api-section">
+                <div class="card full-width">
+                    <div class="card-header">
+                        <i class="fas fa-code"></i>
+                        <h3>API Information</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="api-info" id="apiInfo">
+                            <div class="loading">Loading API information...</div>
+                        </div>
+                        <div class="api-links">
+                            <a href="/docs" target="_blank" class="btn btn-primary">
+                                <i class="fas fa-book"></i>
+                                API Documentation
+                            </a>
+                            <a href="/redoc" target="_blank" class="btn btn-secondary">
+                                <i class="fas fa-file-alt"></i>
+                                ReDoc
+                            </a>
+                            <a href="/api/v1/health" target="_blank" class="btn btn-secondary">
+                                <i class="fas fa-heartbeat"></i>
+                                Health Check
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quick Actions -->
+            <section class="actions-section">
+                <div class="card full-width">
+                    <div class="card-header">
+                        <i class="fas fa-tools"></i>
+                        <h3>Quick Actions</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="action-buttons">
+                            <button class="btn btn-primary" onclick="refreshHealth()">
+                                <i class="fas fa-sync-alt"></i>
+                                Refresh Health Status
+                            </button>
+                            <button class="btn btn-secondary" onclick="testDatabase()">
+                                <i class="fas fa-database"></i>
+                                Test Database Connection
+                            </button>
+                            <button class="btn btn-secondary" onclick="testRedis()">
+                                <i class="fas fa-memory"></i>
+                                Test Redis Connection
+                            </button>
+                            <button class="btn btn-secondary" onclick="testOllama()">
+                                <i class="fas fa-robot"></i>
+                                Test Ollama Service
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- System Information -->
+            <section class="system-info">
+                <div class="card full-width">
+                    <div class="card-header">
+                        <i class="fas fa-info-circle"></i>
+                        <h3>System Information</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="info-grid" id="systemInfo">
+                            <div class="loading">Loading system information...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="footer-content">
+                <p>&copy; 2024 GitHub Repository Monitor. Built with FastAPI, PostgreSQL, Redis, and Ollama.</p>
+                <div class="footer-links">
+                    <a href="https://github.com" target="_blank">
+                        <i class="fab fa-github"></i>
+                        GitHub
+                    </a>
+                    <a href="/docs" target="_blank">
+                        <i class="fas fa-book"></i>
+                        API Docs
+                    </a>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
