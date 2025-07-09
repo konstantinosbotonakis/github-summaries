@@ -6,6 +6,8 @@ import logging
 import asyncio
 import time
 import os
+import shutil
+import glob
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
@@ -65,9 +67,64 @@ class LLMService:
         self.tokenizer = None
         self.pipeline = None
         
+        # DEBUG: Log current model configuration
+        logger.info(f"[DEBUG] LLMService initialized with:")
+        logger.info(f"[DEBUG] - Model name: {self.model_name}")
+        logger.info(f"[DEBUG] - Device: {self.device}")
+        logger.info(f"[DEBUG] - Cache dir: {self.cache_dir}")
+        logger.info(f"[DEBUG] - Max length: {self.max_length}")
+        
         # Ensure cache directory exists
         os.makedirs(self.cache_dir, exist_ok=True)
+        
+        # DEBUG: Check what models are already cached
+        if os.path.exists(self.cache_dir):
+            cached_models = [d for d in os.listdir(self.cache_dir) if os.path.isdir(os.path.join(self.cache_dir, d))]
+            logger.info(f"[DEBUG] Cached models found: {cached_models}")
+        else:
+            logger.info(f"[DEBUG] Cache directory does not exist yet")
+        
+        # Clean up any incomplete downloads from previous attempts
+        self._cleanup_incomplete_downloads()
     
+    def _cleanup_incomplete_downloads(self) -> None:
+        """
+        Clean up incomplete downloads and stale lock files.
+        """
+        try:
+            logger.info("[DEBUG] Cleaning up incomplete downloads...")
+            
+            # Find and remove .incomplete files
+            incomplete_files = glob.glob(os.path.join(self.cache_dir, "**", "*.incomplete"), recursive=True)
+            for file_path in incomplete_files:
+                logger.info(f"[DEBUG] Removing incomplete file: {file_path}")
+                os.remove(file_path)
+            
+            # Find and remove stale .lock files
+            lock_files = glob.glob(os.path.join(self.cache_dir, "**", "*.lock"), recursive=True)
+            for lock_path in lock_files:
+                logger.info(f"[DEBUG] Removing stale lock file: {lock_path}")
+                os.remove(lock_path)
+            
+            # Clean up empty .locks directories
+            locks_dir = os.path.join(self.cache_dir, ".locks")
+            if os.path.exists(locks_dir):
+                try:
+                    # Remove empty subdirectories
+                    for root, dirs, files in os.walk(locks_dir, topdown=False):
+                        for dir_name in dirs:
+                            dir_path = os.path.join(root, dir_name)
+                            if not os.listdir(dir_path):  # Empty directory
+                                logger.info(f"[DEBUG] Removing empty lock directory: {dir_path}")
+                                os.rmdir(dir_path)
+                except Exception as e:
+                    logger.warning(f"[DEBUG] Could not clean locks directory: {e}")
+            
+            logger.info("[DEBUG] Cleanup completed")
+            
+        except Exception as e:
+            logger.warning(f"[DEBUG] Error during cleanup: {e}")
+
     async def initialize(self) -> bool:
         """
         Initialize the LLM service and load the model.
@@ -101,29 +158,76 @@ class LLMService:
     
     def _load_model(self) -> bool:
         """
-        Load the Hugging Face model and tokenizer.
+        Load the Hugging Face model and tokenizer with retry logic.
         
         Returns:
             bool: True if model loaded successfully, False otherwise
         """
+        max_retries = 3
+        retry_delay = 5  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"[DEBUG] Starting model loading attempt {attempt + 1}/{max_retries} for: {self.model_name}")
+                logger.info(f"[DEBUG] Cache directory: {self.cache_dir}")
+                logger.info(f"[DEBUG] Target device: {self.device}")
+                
+                # Check if model is already cached
+                model_cache_path = os.path.join(self.cache_dir, f"models--{self.model_name.replace('/', '--')}")
+                if os.path.exists(model_cache_path):
+                    logger.info(f"[DEBUG] Model cache found at: {model_cache_path}")
+                else:
+                    logger.info(f"[DEBUG] Model cache NOT found, will download from HuggingFace")
+                
+                # Clean up any incomplete downloads before attempting
+                if attempt > 0:
+                    logger.info(f"[DEBUG] Cleaning up incomplete downloads before retry...")
+                    self._cleanup_incomplete_downloads()
+                
+                logger.info(f"[DEBUG] Loading tokenizer for {self.model_name}...")
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name,
+                    cache_dir=self.cache_dir,
+                    resume_download=True,  # Resume interrupted downloads
+                    force_download=False,  # Don't force download if cached
+                    local_files_only=False  # Allow downloading if needed
+                )
+                logger.info(f"[DEBUG] Tokenizer loaded successfully")
+                
+                logger.info(f"[DEBUG] Loading model {self.model_name}...")
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                    self.model_name,
+                    cache_dir=self.cache_dir,
+                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                    resume_download=True,  # Resume interrupted downloads
+                    force_download=False,  # Don't force download if cached
+                    local_files_only=False  # Allow downloading if needed
+                )
+                logger.info(f"[DEBUG] Model loaded successfully")
+                
+                # If we get here, loading was successful
+                break
+                
+            except Exception as e:
+                logger.error(f"[DEBUG] Model loading attempt {attempt + 1} failed: {e}")
+                logger.error(f"[DEBUG] Error type: {type(e).__name__}")
+                
+                if attempt < max_retries - 1:
+                    logger.info(f"[DEBUG] Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    # Clean up any partial downloads before retry
+                    self._cleanup_incomplete_downloads()
+                else:
+                    logger.error(f"[DEBUG] All {max_retries} attempts failed")
+                    return False
+        
         try:
-            logger.info(f"Loading tokenizer for {self.model_name}...")
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                cache_dir=self.cache_dir
-            )
-            
-            logger.info(f"Loading model {self.model_name}...")
-            self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                self.model_name,
-                cache_dir=self.cache_dir,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
-            )
-            
             # Move model to specified device
+            logger.info(f"[DEBUG] Moving model to device: {self.device}")
             self.model.to(self.device)
             
             # Create text generation pipeline
+            logger.info(f"[DEBUG] Creating text generation pipeline...")
             self.pipeline = pipeline(
                 "text2text-generation",
                 model=self.model,
@@ -137,11 +241,23 @@ class LLMService:
                 no_repeat_ngram_size=3
             )
             
-            logger.info("Model and tokenizer loaded successfully")
+            logger.info("[DEBUG] Model and tokenizer loaded successfully")
+            logger.info(f"[DEBUG] Model memory usage: {torch.cuda.memory_allocated() / 1024**2:.1f} MB" if torch.cuda.is_available() else "[DEBUG] Using CPU")
             return True
             
         except Exception as e:
-            logger.error(f"Error loading model: {e}")
+            logger.error(f"[DEBUG] Error in final model setup: {e}")
+            logger.error(f"[DEBUG] Error type: {type(e).__name__}")
+            logger.error(f"[DEBUG] Model name attempted: {self.model_name}")
+            logger.error(f"[DEBUG] Cache directory: {self.cache_dir}")
+            import traceback
+            logger.error(f"[DEBUG] Full traceback: {traceback.format_exc()}")
+            
+            # Clean up partial state
+            self.model = None
+            self.tokenizer = None
+            self.pipeline = None
+            
             return False
     
     async def check_model_health(self) -> bool:
@@ -358,7 +474,7 @@ class LLMService:
     
     def _create_commits_summary_prompt(self, repository_data: Dict[str, Any], commits_data: List[Dict[str, Any]], summary_type: str) -> str:
         """
-        Create a prompt for the LLM based on repository and commits data.
+        Create a detailed prompt for the LLM based on repository and commits data.
         
         Args:
             repository_data: Repository information
@@ -366,71 +482,180 @@ class LLMService:
             summary_type: Type of summary to generate
             
         Returns:
-            str: Formatted prompt for the LLM
+            str: Formatted prompt for the LLM with structured output requirements
         """
         name = repository_data.get("name", "Unknown")
         full_name = repository_data.get("full_name", "Unknown")
         description = repository_data.get("description", "No description available")
         language = repository_data.get("language", "Unknown")
         
-        # Format commits information
+        # Format commits information with more detail
         commits_info = []
-        for commit in commits_data[:20]:  # Limit to 20 most recent commits to avoid token limits
-            commit_msg = commit.get("message", "No message")[:100]  # Truncate long messages
+        author_stats = {}
+        change_types = {"features": 0, "fixes": 0, "docs": 0, "refactor": 0, "other": 0}
+        
+        for commit in commits_data[:25]:  # Increased limit for better analysis
+            commit_msg = commit.get("message", "No message")
             author = commit.get("author_name", "Unknown")
             date = commit.get("author_date", "Unknown")
             additions = commit.get("additions", 0)
             deletions = commit.get("deletions", 0)
             
-            commits_info.append(f"- {commit_msg} (by {author}, +{additions}/-{deletions} changes)")
+            # Track author statistics
+            if author not in author_stats:
+                author_stats[author] = {"commits": 0, "additions": 0, "deletions": 0}
+            author_stats[author]["commits"] += 1
+            author_stats[author]["additions"] += additions
+            author_stats[author]["deletions"] += deletions
+            
+            # Categorize commit types based on message content
+            msg_lower = commit_msg.lower()
+            if any(word in msg_lower for word in ["feat", "feature", "add", "implement", "new"]):
+                change_types["features"] += 1
+            elif any(word in msg_lower for word in ["fix", "bug", "patch", "resolve", "correct"]):
+                change_types["fixes"] += 1
+            elif any(word in msg_lower for word in ["doc", "readme", "comment", "documentation"]):
+                change_types["docs"] += 1
+            elif any(word in msg_lower for word in ["refactor", "cleanup", "reorganize", "restructure"]):
+                change_types["refactor"] += 1
+            else:
+                change_types["other"] += 1
+            
+            # Format commit with full title (truncate only if extremely long)
+            commit_title = commit_msg.split('\n')[0]  # Get first line (title)
+            if len(commit_title) > 120:
+                commit_title = commit_title[:117] + "..."
+            
+            commits_info.append(f"- \"{commit_title}\" by {author} (+{additions}/-{deletions})")
         
         commits_summary = "\n".join(commits_info) if commits_info else "No commits found in the last week"
+        
+        # Format top contributors
+        top_contributors = sorted(author_stats.items(), key=lambda x: x[1]["commits"], reverse=True)[:5]
+        contributors_info = []
+        for author, stats in top_contributors:
+            contributors_info.append(f"- {author}: {stats['commits']} commits (+{stats['additions']}/-{stats['deletions']} lines)")
+        
+        contributors_summary = "\n".join(contributors_info) if contributors_info else "No contributors found"
         
         base_info = f"""Repository: {full_name}
 Description: {description}
 Primary Language: {language}
-Commits from Last Week ({len(commits_data)} total):
-{commits_summary}"""
+Total Commits This Week: {len(commits_data)}
+
+COMMIT DETAILS:
+{commits_summary}
+
+TOP CONTRIBUTORS:
+{contributors_summary}
+
+CHANGE BREAKDOWN:
+- Features: {change_types['features']} commits
+- Bug Fixes: {change_types['fixes']} commits
+- Documentation: {change_types['docs']} commits
+- Refactoring: {change_types['refactor']} commits
+- Other: {change_types['other']} commits"""
         
         if summary_type == "weekly":
-            prompt = f"""Summarize the weekly development activity for this GitHub repository:
+            prompt = f"""Generate a detailed weekly development summary for this GitHub repository. You MUST follow the exact format below and include specific commit titles.
 
 {base_info}
 
-Provide a comprehensive weekly summary that includes:
-1. Overview of development activity in the past week
-2. Key changes and improvements made
-3. Most active contributors
-4. Types of changes (features, bug fixes, documentation, etc.)
-5. Overall development momentum and patterns
+REQUIRED OUTPUT FORMAT (follow this structure exactly):
 
-Focus on what has been accomplished and the direction of the project. Keep the summary informative and professional. Limit to 4-5 paragraphs.
+# Weekly Development Summary: {name}
 
-Summary:"""
+## Key Changes This Week
+[List 5-8 most significant commits with their exact titles and authors]
+- "Exact commit title here" by Author Name
+- "Another exact commit title" by Author Name
+- [Continue with actual commit titles from the data above]
+
+## Top Contributors
+[List top 3-5 contributors with their commit counts and main focus areas]
+- Author Name: X commits - [describe their main contribution focus based on their commits]
+- Author Name: X commits - [describe their main contribution focus]
+
+## Change Categories
+- Features: X commits - [brief description of new features added]
+- Bug Fixes: X commits - [brief description of issues resolved]
+- Documentation: X commits - [brief description of documentation updates]
+- Refactoring: X commits - [brief description of code improvements]
+- Other: X commits - [brief description of other changes]
+
+## Notable Commits
+[Highlight 3-4 most impactful commits with full titles]
+- "Full commit title that represents significant change"
+- "Another important commit title"
+
+## Development Insights
+[2-3 sentences about overall development patterns, velocity, and project direction based on the actual commit data]
+
+IMPORTANT INSTRUCTIONS:
+1. Use EXACT commit titles from the commit details provided above
+2. Include actual author names from the data
+3. Use the actual numbers from the change breakdown
+4. Base all insights on the real commit data provided
+5. Do not make up or generalize commit titles
+6. Ensure every commit title is quoted and attributed to the correct author
+
+Generate the summary now:"""
         
         elif summary_type == "commits":
-            prompt = f"""Analyze the recent commits for this GitHub repository:
+            prompt = f"""Analyze the recent commits for this GitHub repository and provide a detailed technical analysis:
 
 {base_info}
 
-Provide a detailed commit analysis that includes:
-1. Summary of commit patterns and frequency
-2. Analysis of code changes and their impact
-3. Contributor activity and collaboration patterns
-4. Quality indicators from commit messages and changes
-5. Technical insights from the development activity
+REQUIRED OUTPUT FORMAT:
 
-Focus on technical aspects and development practices. Limit to 4-5 paragraphs.
+# Commit Analysis: {name}
+
+## Commit Patterns
+[Analyze the frequency, timing, and distribution of commits]
+
+## Technical Changes
+[List specific commit titles that represent technical improvements]
+- "Exact commit title" - [brief technical impact]
+- "Another commit title" - [brief technical impact]
+
+## Code Quality Indicators
+[Analyze commit messages, change sizes, and patterns for quality insights]
+
+## Contributor Collaboration
+[Analyze how contributors are working together based on commit patterns]
+
+## Development Velocity
+[Assess the pace and consistency of development]
+
+Use the exact commit titles and data provided above. Do not generalize or create fictional commit messages.
 
 Analysis:"""
         
         else:
-            # Default to weekly
-            prompt = f"""Summarize the recent development activity for this GitHub repository:
+            # Enhanced default prompt
+            prompt = f"""Create a comprehensive development summary for this GitHub repository:
 
 {base_info}
 
-Provide a clear summary of what has been happening in this repository over the past week, including key changes, contributor activity, and overall development progress. Limit to 3-4 paragraphs.
+REQUIRED OUTPUT FORMAT:
+
+# Development Summary: {name}
+
+## Recent Activity
+[Summarize the development activity using specific commit titles]
+
+## Key Contributors
+[List actual contributors and their main contributions]
+
+## Major Changes
+[List 3-5 most significant commits with exact titles]
+- "Exact commit title" by Author
+- "Another exact commit title" by Author
+
+## Development Focus
+[Describe what the team has been focusing on based on actual commit data]
+
+Use only the real commit data provided above. Include exact commit titles and author names.
 
 Summary:"""
         

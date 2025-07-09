@@ -113,7 +113,7 @@ Key environment variables (see `.env.example` for complete list):
 | `DATABASE_URL` | SQLite database path | `sqlite:///./test.db` |
 | `SECRET_KEY` | Application secret key | `your_secret_key_here_change_in_production` |
 | `GITHUB_TOKEN` | GitHub API token | `` |
-| `HF_MODEL_NAME` | Hugging Face model name | `google/flan-t5-small` |
+| `HF_MODEL_NAME` | Hugging Face model name | `google/flan-t5-base` |
 | `DEBUG` | Debug mode | `true` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 

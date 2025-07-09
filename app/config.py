@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     GITHUB_API_URL: str = Field(default="https://api.github.com", env="GITHUB_API_URL")
     
     # Hugging Face Model Configuration
-    HF_MODEL_NAME: str = Field(default="google/flan-t5-small", env="HF_MODEL_NAME")
+    HF_MODEL_NAME: str = Field(default="google/flan-t5-base", env="HF_MODEL_NAME")
     HF_DEVICE: str = Field(default="cpu", env="HF_DEVICE")  # "cpu" or "cuda"
     HF_MAX_LENGTH: int = Field(default=512, env="HF_MAX_LENGTH")
     HF_CACHE_DIR: str = Field(default="./models", env="HF_CACHE_DIR")
