@@ -43,7 +43,7 @@ fastapi-cors==0.0.6
 celery==5.3.4
 
 # JSON handling
-orjson==3.9.10
+orjson==3.11.6
 
 # Validation
 email-validator==2.1.0
